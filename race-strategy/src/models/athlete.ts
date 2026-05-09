@@ -12,6 +12,9 @@ export interface CourseHistorique {
   denivelePositif: number; // m
   deniveleNegatif: number; // m
   temps: number; // secondes
+  date?: number; // timestamp (optionnel, utilisé pour pondération temporelle)
+  nom?: string; // optionnel
+  fcMoyenne?: number; // bpm, optionnel (pour calibrer % VMA réel)
 }
 
 export interface ProfilAthlete {

@@ -3,6 +3,9 @@ import type { ProfilAthlete, CourseHistorique, ZonesCardiaques } from '../models
 import { useAthleteStore } from '../store/athlete-store';
 import { parseDuree, formaterAllure } from '../engine/format';
 import { calculerVMA, calculerVO2max, allureSeuil, allureMarathon, allureEndurance, fcMaxTanaka } from '../engine/vma';
+import { analyserProfilCoureur } from '../engine/analytics';
+import { formaterTempsPassage } from '../engine/format';
+import { TimeInput } from '../components/TimeInput';
 
 function formatSecToMMSS(s: number): string {
   const m = Math.floor(s / 60);
@@ -41,7 +44,7 @@ export function ProfileSection() {
   const [profil, setProfilLocal] = useState<ProfilAthlete>(saved ?? DEFAUT);
   const [temps1500mStr, setTemps1500mStr] = useState(saved ? formatSecToMMSS(saved.temps1500m) : '6:30');
   const [showZones, setShowZones] = useState(!!saved?.zones);
-  const [newCourse, setNewCourse] = useState({ distance: '', dplus: '', dmoins: '', temps: '' });
+  const [newCourse, setNewCourse] = useState({ distance: '', dplus: '', dmoins: '', temps: '', date: '' });
   const [dirty, setDirty] = useState(false);
 
   const [vmaStr, setVmaStr] = useState(saved?.vmaOverride != null ? String(saved.vmaOverride) : '');
@@ -85,15 +88,17 @@ export function ProfileSection() {
   function handleAjouterCourse() {
     const temps = parseDuree(newCourse.temps);
     if (!temps || !newCourse.distance) return;
+    const date = newCourse.date ? new Date(newCourse.date).getTime() : Date.now();
     const course: CourseHistorique = {
       id: crypto.randomUUID(),
       distance: parseFloat(newCourse.distance),
       denivelePositif: parseFloat(newCourse.dplus) || 0,
       deniveleNegatif: parseFloat(newCourse.dmoins) || 0,
       temps,
+      date,
     };
     ajouterCourse(course);
-    setNewCourse({ distance: '', dplus: '', dmoins: '', temps: '' });
+    setNewCourse({ distance: '', dplus: '', dmoins: '', temps: '', date: '' });
   }
 
   const t1500 = parseDuree(temps1500mStr);
@@ -139,15 +144,140 @@ export function ProfileSection() {
           onChange={(v) => update('fcRepos', v ? +v : undefined)} placeholder="60" />
         <Field label="Cadence (pas/min)" type="number" value={profil.cadence}
           onChange={(v) => update('cadence', +v)} />
-        <Field label="Temps 1500m" type="text" value={temps1500mStr}
-          onChange={(v) => { setTemps1500mStr(v); setDirty(true); }} placeholder="6:30" />
+        <div>
+          <label className="block text-xs font-mono text-text-muted tracking-[0.12em] mb-1">
+            TEMPS 1500M
+          </label>
+          <TimeInput
+            value={temps1500mStr}
+            onChange={(v) => { setTemps1500mStr(v); setDirty(true); }}
+            placeholder="6:30 ou 6m30s"
+            className="w-full bg-bg-surface border text-text px-3 py-2 text-sm font-mono focus:outline-none"
+            examples={["6:30", "6m30s", "6'30\"", "390s"]}
+            preferShort
+          />
+        </div>
       </div>
+
+      {/* Profil de performance basé sur tout l'historique */}
+      {(historique.length > 0 || vmaCalculee) && (() => {
+        const profilCoureur = analyserProfilCoureur({ ...profil, historique, temps1500m: t1500 ?? profil.temps1500m });
+        const confianceColor = (c: 'faible' | 'moyenne' | 'élevée') =>
+          c === 'élevée' ? 'text-accent' : c === 'moyenne' ? 'text-accent-orange' : 'text-text-muted';
+        return (
+          <div className="bg-bg-raised border border-border p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="font-mono text-[10px] text-accent tracking-[0.16em]">
+                PROFIL DE PERFORMANCE — ANALYSE STATISTIQUE
+              </div>
+              <span className="text-[10px] text-text-muted">
+                Pondéré par récence (demi-vie 90j) · {historique.length + (t1500 ? 1 : 0)} source(s)
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-4 mb-5">
+              <div className="border border-border p-3">
+                <div className="font-mono text-[9px] text-text-muted tracking-[0.14em]">VMA ESTIMEE</div>
+                <div className="font-display font-extrabold text-2xl text-accent leading-none mt-1">
+                  {profilCoureur.vma.toFixed(1)}
+                  <span className="text-xs text-text-muted ml-1 font-mono font-normal">km/h</span>
+                </div>
+                <div className={`text-[10px] font-mono mt-2 ${confianceColor(profilCoureur.vmaConfiance)}`}>
+                  Confiance : {profilCoureur.vmaConfiance}
+                </div>
+                <div className="text-[10px] text-text-secondary mt-1">{profilCoureur.vmaSourceDescr}</div>
+                {profilCoureur.vmaPlage[0] !== profilCoureur.vmaPlage[1] && (
+                  <div className="text-[10px] font-mono text-text-muted mt-0.5">
+                    plage ±1σ : {profilCoureur.vmaPlage[0].toFixed(1)} – {profilCoureur.vmaPlage[1].toFixed(1)} km/h
+                  </div>
+                )}
+              </div>
+
+              <div className="border border-border p-3">
+                <div className="font-mono text-[9px] text-text-muted tracking-[0.14em]">EXPOSANT RIEGEL (k)</div>
+                <div className="font-display font-extrabold text-2xl leading-none mt-1">
+                  {profilCoureur.k.toFixed(3)}
+                </div>
+                <div className={`text-[10px] font-mono mt-2 ${confianceColor(profilCoureur.kConfiance)}`}>
+                  Confiance : {profilCoureur.kConfiance}
+                </div>
+                <div className="text-[10px] text-text-secondary mt-1">
+                  {profilCoureur.k < 1.05 ? 'Excellente endurance' :
+                   profilCoureur.k < 1.07 ? 'Endurance médiane (pop. 1.06)' :
+                   profilCoureur.k < 1.10 ? 'Endurance perfectible' :
+                   'Endurance faible — fatigue marquée'}
+                </div>
+                <div className="text-[10px] font-mono text-text-muted mt-0.5">
+                  {profilCoureur.kSourceDescr}
+                </div>
+              </div>
+
+              <div className="border border-border p-3">
+                <div className="font-mono text-[9px] text-text-muted tracking-[0.14em]">COEF. MONTEE</div>
+                <div className="font-display font-extrabold text-2xl leading-none mt-1">
+                  {profilCoureur.coefMontee.toFixed(2)}
+                </div>
+                <div className={`text-[10px] font-mono mt-2 ${confianceColor(profilCoureur.coefMonteeConfiance)}`}>
+                  Confiance : {profilCoureur.coefMonteeConfiance}
+                </div>
+                <div className="text-[10px] text-text-secondary mt-1">
+                  {profilCoureur.coefMontee < 0.85 ? 'Bon grimpeur' :
+                   profilCoureur.coefMontee < 1.15 ? 'Grimpeur médian' :
+                   'Pénalisé en montée'}
+                </div>
+                <div className="text-[10px] font-mono text-text-muted mt-0.5">
+                  {profilCoureur.coefMonteeSourceDescr}
+                </div>
+              </div>
+            </div>
+
+            {/* Predictions standards */}
+            <div>
+              <div className="font-mono text-[9px] text-text-muted tracking-[0.14em] mb-2">
+                TEMPS PREDITS — COURSE PLATE
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                {profilCoureur.predictions.map((p) => (
+                  <div key={p.distance} className="border border-border p-2.5 text-center">
+                    <div className="font-mono text-[9px] text-text-muted tracking-[0.14em]">{p.label}</div>
+                    <div className="font-display font-bold text-base mt-0.5">
+                      {formaterTempsPassage(p.tempsPredit)}
+                    </div>
+                    <div className="font-mono text-[10px] text-text-muted mt-0.5">
+                      {formaterAllure(p.allurePredite)}/km
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Détail des sources VMA */}
+            {profilCoureur.estimationsVMA.length > 1 && (
+              <details className="mt-4">
+                <summary className="font-mono text-[10px] text-text-muted tracking-[0.14em] cursor-pointer hover:text-text">
+                  DETAIL DES ESTIMATIONS ({profilCoureur.estimationsVMA.length})
+                </summary>
+                <div className="mt-2 space-y-1">
+                  {profilCoureur.estimationsVMA.map((e, i) => (
+                    <div key={i} className="flex justify-between font-mono text-[11px] py-1 border-b border-border/40">
+                      <span className="text-text-secondary">{e.source}</span>
+                      <span className="text-text">
+                        VMA {e.vma.toFixed(1)} <span className="text-text-muted text-[10px]">poids {e.poids.toFixed(2)}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        );
+      })()}
 
       {vmaCalculee && (
         <div className="bg-bg-raised border border-border p-5">
           <div className="flex items-center justify-between mb-3">
-            <div className="font-mono text-[10px] text-text-muted tracking-[0.16em]">DONNEES DEDUITES</div>
-            <span className="text-[10px] text-text-muted">Saisissez une valeur pour surcharger le calcul</span>
+            <div className="font-mono text-[10px] text-text-muted tracking-[0.16em]">SURCHARGES MANUELLES</div>
+            <span className="text-[10px] text-text-muted">Forcer une valeur si vous avez des données précises</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
             <OverrideField label="VMA (km/h)" placeholder={vmaCalculee.toFixed(1)}
@@ -210,29 +340,41 @@ export function ProfileSection() {
       </div>
 
       <div>
-        <div className="font-mono text-[10px] text-text-muted tracking-[0.16em] mb-3">HISTORIQUE DE COURSES</div>
+        <div className="font-mono text-[10px] text-text-muted tracking-[0.16em] mb-3">
+          HISTORIQUE DE COURSES <span className="text-text-secondary normal-case tracking-normal">— plus il est riche, meilleures sont les prédictions</span>
+        </div>
         {historique.length > 0 && (
           <div className="space-y-2 mb-4">
-            {historique.map((c) => (
-              <div key={c.id} className="flex items-center justify-between bg-bg-raised border border-border px-4 py-2.5 text-sm">
-                <span>
-                  <span className="font-medium font-mono">{c.distance} km</span>
-                  <span className="text-text-muted mx-2">—</span>
-                  <span className="font-mono">{formatSecToHMS(c.temps)}</span>
-                  {c.denivelePositif > 0 && (
-                    <span className="text-text-secondary ml-2">D+{c.denivelePositif}m D-{c.deniveleNegatif}m</span>
-                  )}
-                </span>
-                <button onClick={() => supprimerCourse(c.id)}
-                  className="text-accent text-xs bg-transparent border-none cursor-pointer hover:brightness-125">
-                  Supprimer
-                </button>
-              </div>
-            ))}
+            {historique.map((c) => {
+              const ageJours = c.date ? Math.floor((Date.now() - c.date) / (24 * 60 * 60 * 1000)) : null;
+              const poids = c.date ? Math.pow(0.5, (ageJours ?? 0) / 90) : 0.5;
+              return (
+                <div key={c.id} className="flex items-center justify-between bg-bg-raised border border-border px-4 py-2.5 text-sm">
+                  <span>
+                    <span className="font-medium font-mono">{c.distance} km</span>
+                    <span className="text-text-muted mx-2">—</span>
+                    <span className="font-mono">{formatSecToHMS(c.temps)}</span>
+                    {c.denivelePositif > 0 && (
+                      <span className="text-text-secondary ml-2">D+{c.denivelePositif}m D-{c.deniveleNegatif}m</span>
+                    )}
+                    {c.date && (
+                      <span className="text-text-muted ml-3 font-mono text-xs">
+                        {new Date(c.date).toLocaleDateString('fr-FR')}
+                        <span className="text-text-dim ml-2">poids {poids.toFixed(2)}</span>
+                      </span>
+                    )}
+                  </span>
+                  <button onClick={() => supprimerCourse(c.id)}
+                    className="text-accent text-xs bg-transparent border-none cursor-pointer hover:brightness-125">
+                    Supprimer
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-2">
           <input type="number" placeholder="Distance (km)" value={newCourse.distance}
             onChange={(e) => setNewCourse((c) => ({ ...c, distance: e.target.value }))}
             className={inputClass} />
@@ -242,9 +384,18 @@ export function ProfileSection() {
           <input type="number" placeholder="D- (m)" value={newCourse.dmoins}
             onChange={(e) => setNewCourse((c) => ({ ...c, dmoins: e.target.value }))}
             className={inputClass} />
-          <input type="text" placeholder="Temps (hh:mm:ss)" value={newCourse.temps}
-            onChange={(e) => setNewCourse((c) => ({ ...c, temps: e.target.value }))}
-            className={inputClass} />
+          <TimeInput
+            value={newCourse.temps}
+            onChange={(v) => setNewCourse((c) => ({ ...c, temps: v }))}
+            placeholder="3h30 / 3:30:00"
+            className="w-full bg-bg-surface border text-text px-3 py-2 text-sm font-mono focus:outline-none"
+            showParsed={newCourse.temps.length > 0}
+            examples={['3h30', '3:30:00', '5400s']}
+          />
+          <input type="date" value={newCourse.date}
+            onChange={(e) => setNewCourse((c) => ({ ...c, date: e.target.value }))}
+            className={inputClass}
+            title="Date de la course (pour pondération temporelle)" />
         </div>
         <button onClick={handleAjouterCourse}
           className="mt-2 text-sm text-accent hover:brightness-125 bg-transparent border-none cursor-pointer">

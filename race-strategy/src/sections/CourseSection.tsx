@@ -1,15 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Parcours, Segment } from '../models/gpx';
 import type { Objectif } from '../models/objective';
 import { useAthleteStore } from '../store/athlete-store';
 import { usePlanStore } from '../store/plan-store';
+import { useCoursesStore } from '../store/courses-store';
 import { GpxUpload } from '../components/GpxUpload';
 import { ObjectiveForm } from '../components/ObjectiveForm';
 import { SplitsTable } from '../components/SplitsTable';
 import { ElevationPaceChart } from '../components/ElevationPaceChart';
 import type { TypeScenario } from '../models/strategy';
-import { calculerVMA } from '../engine/vma';
-import { analyserHistorique } from '../engine/experience';
+import { analyserProfilCoureur, predireTempsCourse } from '../engine/analytics';
 import { calculerAllurePlate, calculerTempsCible } from '../engine/pacing';
 import { genererTousScenarios } from '../engine/splits';
 import { validerObjectif } from '../engine/validation';
@@ -18,25 +18,25 @@ import { genererPDFPreCourse } from '../io/pdf-pre-race';
 import { genererFichierGarmin } from '../io/fit-export';
 import { encoderPlan } from '../io/share-link';
 
-interface ParcoursEntry {
-  id: string;
-  nom: string;
-  parcours: Parcours;
-  type: 'gpx' | 'manuel';
-}
-
 export function CourseSection() {
   const { profil, historique } = useAthleteStore();
   const { scenarios, scenarioActif, setScenarios, setScenarioActif, validation, setValidation, setParcours, setObjectif } = usePlanStore();
+  const courses = useCoursesStore((s) => s.courses);
+  const courseActiveId = useCoursesStore((s) => s.courseActiveId);
+  const ajouterCourse = useCoursesStore((s) => s.ajouter);
+  const mettreAJourCourse = useCoursesStore((s) => s.mettreAJour);
+  const supprimerCourse = useCoursesStore((s) => s.supprimer);
+  const selectionnerCourse = useCoursesStore((s) => s.selectionner);
+  const renommerCourse = useCoursesStore((s) => s.renommer);
 
-  const [entries, setEntries] = useState<ParcoursEntry[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
   const [manualForm, setManualForm] = useState({ nom: '', distance: '', dplus: '', dmoins: '' });
   const [copied, setCopied] = useState(false);
+  const [editNomId, setEditNomId] = useState<string | null>(null);
+  const [editNomValue, setEditNomValue] = useState('');
 
-  const selectedEntry = entries.find((e) => e.id === selectedId);
-  const selectedParcours = selectedEntry?.parcours ?? null;
+  const courseActive = courses.find((c) => c.id === courseActiveId) ?? null;
+  const selectedParcours = courseActive?.parcours ?? null;
   const scenario = scenarios.find((s) => s.type === scenarioActif);
 
   const SCEN_LABELS: Record<string, { code: string; label: string }> = {
@@ -45,12 +45,24 @@ export function CourseSection() {
     competition: { code: 'COMP', label: 'Compétition' },
   };
 
+  // Régénère les scénarios automatiquement à chaque sélection ou changement de profil
+  useEffect(() => {
+    if (!profil || !courseActive || !courseActive.objectif) {
+      setScenarios([]);
+      setValidation(null);
+      return;
+    }
+    runGeneration(courseActive.parcours, courseActive.objectif);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseActiveId, profil?.temps1500m, profil?.vmaOverride, profil?.poids, historique.length]);
+
   function addGPX(parcours: Parcours) {
-    const id = crypto.randomUUID();
-    const entry: ParcoursEntry = { id, nom: parcours.nom, parcours, type: 'gpx' };
-    setEntries((prev) => [...prev, entry]);
-    setSelectedId(id);
-    resetPlan();
+    ajouterCourse({
+      nom: parcours.nom,
+      parcours,
+      objectif: null,
+      type: 'gpx',
+    });
   }
 
   function addManual() {
@@ -81,44 +93,41 @@ export function CourseSection() {
       segments,
     };
 
-    const id = crypto.randomUUID();
-    setEntries((prev) => [...prev, { id, nom: manualForm.nom, parcours, type: 'manuel' }]);
-    setSelectedId(id);
+    ajouterCourse({ nom: manualForm.nom, parcours, objectif: null, type: 'manuel' });
     setShowManual(false);
     setManualForm({ nom: '', distance: '', dplus: '', dmoins: '' });
-    resetPlan();
   }
 
-  function removeEntry(id: string) {
-    setEntries((prev) => prev.filter((e) => e.id !== id));
-    if (selectedId === id) {
-      setSelectedId(null);
-      resetPlan();
-    }
-  }
+  function runGeneration(parcours: Parcours, objectif: Objectif) {
+    if (!profil) return;
 
-  function resetPlan() {
-    setScenarios([]);
-    setValidation(null);
+    setObjectif(objectif);
+    setParcours(parcours);
+
+    // Analyse complète du profil coureur (intègre 1500m + historique + dénivelé)
+    const profilCoureur = analyserProfilCoureur({ ...profil, historique });
+    const vma = profilCoureur.vma;
+    const coefficients = {
+      coefficientMontee: profilCoureur.coefMontee,
+      exposantRiegel: profilCoureur.k,
+      facteurFatigue: profilCoureur.facteurFatigue,
+    };
+
+    const allurePlate = calculerAllurePlate(objectif, parcours.distanceTotale, vma);
+    const tempsCible = calculerTempsCible(objectif, parcours.distanceTotale, vma);
+    const distanceKm = parcours.distanceTotale / 1000;
+
+    const v = validerObjectif(tempsCible, distanceKm, vma, profil.historique, coefficients.exposantRiegel);
+    setValidation(v);
+
+    const s = genererTousScenarios(parcours.segments, allurePlate, coefficients, profil.poids);
+    setScenarios(s);
   }
 
   function generer(objectif: Objectif) {
-    if (!profil || !selectedParcours) return;
-
-    setObjectif(objectif);
-    setParcours(selectedParcours);
-
-    const vma = profil.vmaOverride ?? calculerVMA(profil.temps1500m);
-    const coefficients = analyserHistorique(historique, vma);
-    const allurePlate = calculerAllurePlate(objectif, selectedParcours.distanceTotale, vma);
-    const tempsCible = calculerTempsCible(objectif, selectedParcours.distanceTotale, vma);
-    const distanceKm = selectedParcours.distanceTotale / 1000;
-
-    const v = validerObjectif(tempsCible, distanceKm, vma, profil.historique);
-    setValidation(v);
-
-    const s = genererTousScenarios(selectedParcours.segments, allurePlate, coefficients, profil.poids);
-    setScenarios(s);
+    if (!profil || !courseActive) return;
+    mettreAJourCourse(courseActive.id, { objectif });
+    runGeneration(courseActive.parcours, objectif);
   }
 
   function exportPDF() {
@@ -140,6 +149,18 @@ export function CourseSection() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  function startEditNom(id: string, current: string) {
+    setEditNomId(id);
+    setEditNomValue(current);
+  }
+  function commitEditNom() {
+    if (editNomId && editNomValue.trim()) {
+      renommerCourse(editNomId, editNomValue.trim());
+    }
+    setEditNomId(null);
+    setEditNomValue('');
+  }
+
   if (!profil) {
     return (
       <div className="p-12 text-center border border-border m-6">
@@ -149,21 +170,35 @@ export function CourseSection() {
   }
 
   // --- PLAN VIEW (V1 Cockpit) ---
-  if (scenarios.length > 0 && selectedParcours && scenario) {
+  if (scenarios.length > 0 && selectedParcours && scenario && courseActive) {
     const distKm = selectedParcours.distanceTotale / 1000;
     const allureMoy = scenario.tempsFinal / distKm;
 
     return (
       <div className="flex flex-col h-full">
-        {/* Course header */}
         <section className="px-6 pt-4 pb-3 border-b border-border flex items-end justify-between gap-6">
-          <div>
+          <div className="flex-1 min-w-0">
             <div className="font-mono text-[10px] text-text-muted tracking-[0.18em]">
-              COURSE — {selectedParcours.nom.toUpperCase()}
+              COURSE — {courseActive.type === 'gpx' ? 'GPX' : 'MANUEL'}
             </div>
-            <h1 className="mt-1 font-display font-extrabold text-[38px] leading-none tracking-tight">
-              {selectedParcours.nom}
-            </h1>
+            {editNomId === courseActive.id ? (
+              <input
+                value={editNomValue}
+                onChange={(e) => setEditNomValue(e.target.value)}
+                onBlur={commitEditNom}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitEditNom(); if (e.key === 'Escape') { setEditNomId(null); }}}
+                autoFocus
+                className="mt-1 font-display font-extrabold text-[38px] leading-none tracking-tight bg-bg-active border border-accent text-text px-2 py-0.5 w-full"
+              />
+            ) : (
+              <h1
+                onClick={() => startEditNom(courseActive.id, courseActive.nom)}
+                className="mt-1 font-display font-extrabold text-[38px] leading-none tracking-tight cursor-text hover:text-accent transition-colors"
+                title="Cliquer pour renommer"
+              >
+                {courseActive.nom}
+              </h1>
+            )}
           </div>
           <div className="flex gap-7 font-mono">
             <StatBlock label="DISTANCE" value={distKm.toFixed(1)} unit="km" />
@@ -173,7 +208,6 @@ export function CourseSection() {
           </div>
         </section>
 
-        {/* Scenario tabs */}
         <div className="px-6 py-2.5 border-b border-border flex gap-0">
           {scenarios.map((s) => {
             const active = scenarioActif === s.type;
@@ -183,8 +217,7 @@ export function CourseSection() {
                 className={`flex-1 px-3.5 py-2.5 text-left border cursor-pointer transition-colors ${
                   active ? 'bg-bg-active border-accent' : 'bg-transparent border-border-strong'
                 }`}
-                style={{ borderRight: 'none' }}
-              >
+                style={{ borderRight: 'none' }}>
                 <div className="flex justify-between items-baseline">
                   <span className={`font-mono text-[10px] tracking-[0.16em] ${active ? 'text-accent' : 'text-text-muted'}`}>
                     {info.code}
@@ -198,66 +231,35 @@ export function CourseSection() {
           <div className="border-r border-border-strong" />
         </div>
 
-        {/* Main grid */}
         <div className="flex-1 grid min-h-0" style={{ gridTemplateColumns: '1fr 360px' }}>
-          {/* Chart panel */}
           <div className="border-r border-border flex flex-col">
             <div className="px-6 pt-3.5 pb-1.5 flex justify-between items-baseline">
               <div className="font-mono text-[10px] text-text-muted tracking-[0.16em]">
                 PROFIL · ALLURE PREVUE
               </div>
               <div className="flex gap-4 font-mono text-[11px] text-text-secondary">
-                <span>
-                  <span className="inline-block w-2.5 h-0.5 bg-text-dim align-middle mr-1" />
-                  élévation
-                </span>
-                <span>
-                  <span className="inline-block w-2.5 h-0.5 bg-accent align-middle mr-1" />
-                  allure
-                </span>
+                <span><span className="inline-block w-2.5 h-0.5 bg-text-dim align-middle mr-1" />élévation</span>
+                <span><span className="inline-block w-2.5 h-0.5 bg-accent align-middle mr-1" />allure</span>
                 {scenario.nutrition.gels.length > 0 && (
-                  <span>
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent align-middle mr-1" />
-                    gel
-                  </span>
+                  <span><span className="inline-block w-1.5 h-1.5 rounded-full bg-accent align-middle mr-1" />gel</span>
                 )}
               </div>
             </div>
             <div className="px-3 pb-2">
-              <ElevationPaceChart
-                parcours={selectedParcours}
-                splits={scenario.splits}
-                nutrition={scenario.nutrition}
-                width={760}
-                height={240}
-              />
+              <ElevationPaceChart parcours={selectedParcours} splits={scenario.splits}
+                nutrition={scenario.nutrition} width={760} height={240} />
             </div>
 
-            {/* Section breakdown */}
             <div className="grid grid-cols-3 border-t border-b border-border">
               {[
-                {
-                  code: '01', label: 'Départ',
-                  range: `0 — ${Math.round(distKm * 0.3)} km`,
-                  cible: `${formaterAllure(allureMoy * 1.04)}/km`,
-                  note: 'Patience — ne pas se laisser emporter'
-                },
-                {
-                  code: '02', label: 'Milieu',
-                  range: `${Math.round(distKm * 0.3)} — ${Math.round(distKm * 0.7)} km`,
-                  cible: `${formaterAllure(allureMoy)}/km`,
-                  note: 'Régularité, FC stable'
-                },
-                {
-                  code: '03', label: 'Fin',
-                  range: `${Math.round(distKm * 0.7)} — ${distKm.toFixed(1)} km`,
-                  cible: `${formaterAllure(allureMoy * 0.97)}/km`,
-                  note: 'Tout donner, mental sur les derniers km'
-                },
+                { code: '01', label: 'Départ', range: `0 — ${Math.round(distKm * 0.3)} km`,
+                  cible: `${formaterAllure(allureMoy * 1.04)}/km`, note: 'Patience — ne pas se laisser emporter' },
+                { code: '02', label: 'Milieu', range: `${Math.round(distKm * 0.3)} — ${Math.round(distKm * 0.7)} km`,
+                  cible: `${formaterAllure(allureMoy)}/km`, note: 'Régularité, FC stable' },
+                { code: '03', label: 'Fin', range: `${Math.round(distKm * 0.7)} — ${distKm.toFixed(1)} km`,
+                  cible: `${formaterAllure(allureMoy * 0.97)}/km`, note: 'Tout donner, mental sur les derniers km' },
               ].map((sec, i) => (
-                <div key={sec.code}
-                  className={`px-4.5 py-3.5 ${i < 2 ? 'border-r border-border' : ''}`}
-                >
+                <div key={sec.code} className={`px-4.5 py-3.5 ${i < 2 ? 'border-r border-border' : ''}`}>
                   <div className="flex items-baseline gap-2">
                     <span className="font-mono text-[11px] text-accent">{sec.code}</span>
                     <span className="font-display font-bold text-lg">{sec.label}</span>
@@ -271,13 +273,11 @@ export function CourseSection() {
               ))}
             </div>
 
-            {/* Splits table */}
             <div className="flex-1 overflow-y-auto">
               <SplitsTable splits={scenario.splits} />
             </div>
           </div>
 
-          {/* Right rail */}
           <aside className="flex flex-col">
             <RailBlock title="ATHLETE">
               <KV k="Poids" v={`${profil.poids} kg`} />
@@ -294,8 +294,7 @@ export function CourseSection() {
               <KV k="Hydratation" v={`${scenario.nutrition.hydratationMlParHeure} ml/h`} />
               <KV k="Gels" v={scenario.nutrition.gels.length > 0
                 ? `${scenario.nutrition.gels.length} (km ${scenario.nutrition.gels.map(g => g.km).join(', ')})`
-                : 'Aucun'
-              } />
+                : 'Aucun'} />
             </RailBlock>
             <div className="px-4.5 py-3.5 border-t border-border mt-auto flex flex-col gap-2">
               <div className="flex gap-2">
@@ -312,9 +311,9 @@ export function CourseSection() {
                 className="w-full py-2 bg-transparent text-text-secondary border border-border-strong text-xs tracking-[0.08em] cursor-pointer hover:border-text-muted">
                 {copied ? 'COPIE !' : 'COPIER LE LIEN'}
               </button>
-              <button onClick={() => { resetPlan(); }}
+              <button onClick={() => selectionnerCourse(null)}
                 className="w-full py-2 bg-transparent text-text-muted border border-border text-xs tracking-[0.08em] cursor-pointer hover:text-text-secondary">
-                NOUVEAU PLAN
+                ← MES COURSES
               </button>
             </div>
           </aside>
@@ -323,107 +322,139 @@ export function CourseSection() {
     );
   }
 
-  // --- SETUP VIEW ---
+  // --- SETUP / LIST VIEW ---
   return (
     <div className="p-6 space-y-8 max-w-4xl mx-auto">
       <h1 className="font-display font-extrabold text-2xl">Parcours & Stratégie</h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="space-y-4">
-          <GpxUpload onParcours={addGPX} label="Ajouter un fichier GPX" />
-          <button
-            onClick={() => setShowManual(!showManual)}
-            className="text-sm text-accent hover:brightness-125 bg-transparent border-none cursor-pointer"
-          >
-            {showManual ? 'Annuler' : '+ Saisie manuelle (sans GPX)'}
-          </button>
-          {showManual && (
-            <div className="space-y-2 bg-bg-raised border border-border p-4">
-              <input type="text" placeholder="Nom du parcours" value={manualForm.nom}
-                onChange={(e) => setManualForm((f) => ({ ...f, nom: e.target.value }))}
-                className="w-full bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
-              <div className="grid grid-cols-3 gap-2">
-                <input type="number" placeholder="Distance (km)" value={manualForm.distance}
-                  onChange={(e) => setManualForm((f) => ({ ...f, distance: e.target.value }))}
-                  className="bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
-                <input type="number" placeholder="D+ (m)" value={manualForm.dplus}
-                  onChange={(e) => setManualForm((f) => ({ ...f, dplus: e.target.value }))}
-                  className="bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
-                <input type="number" placeholder="D- (m)" value={manualForm.dmoins}
-                  onChange={(e) => setManualForm((f) => ({ ...f, dmoins: e.target.value }))}
-                  className="bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
-              </div>
-              <button onClick={addManual}
-                className="w-full bg-accent text-bg py-2 text-sm font-semibold tracking-[0.08em] cursor-pointer border-none hover:brightness-110">
-                AJOUTER
-              </button>
-            </div>
-          )}
-        </div>
-
+      {/* Liste des courses sauvegardées */}
+      {courses.length > 0 && (
         <div>
-          <label className="block text-xs font-mono text-text-muted tracking-[0.12em] mb-2">PARCOURS DISPONIBLES</label>
-          {entries.length === 0 ? (
-            <p className="text-sm text-text-muted">Aucun parcours ajouté</p>
-          ) : (
-            <div className="space-y-2">
-              {entries.map((e) => (
-                <div key={e.id}
-                  onClick={() => { setSelectedId(e.id); resetPlan(); }}
-                  className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors border ${
-                    selectedId === e.id
-                      ? 'border-accent bg-bg-active'
-                      : 'border-border hover:bg-bg-hover'
-                  }`}
-                >
-                  <div>
-                    <p className="text-sm font-medium">{e.nom}</p>
-                    <p className="text-xs text-text-secondary">
-                      {(e.parcours.distanceTotale / 1000).toFixed(1)} km
-                      {e.parcours.denivelePositifTotal > 0 && ` — D+${e.parcours.denivelePositifTotal}m`}
-                      <span className="ml-2 text-text-muted">{e.type === 'gpx' ? 'GPX' : 'Manuel'}</span>
-                    </p>
+          <div className="font-mono text-[10px] text-text-muted tracking-[0.16em] mb-2">MES COURSES SAUVEGARDEES</div>
+          <div className="space-y-2">
+            {courses.map((c) => (
+              <div key={c.id} className="flex items-center justify-between px-4 py-3 cursor-pointer transition-colors border border-border hover:bg-bg-hover">
+                <div onClick={() => selectionnerCourse(c.id)} className="flex-1 min-w-0">
+                  <div className="flex items-center gap-3">
+                    <p className="text-sm font-medium truncate">{c.nom}</p>
+                    {c.objectif && (
+                      <span className="font-mono text-[10px] text-accent border border-border-strong px-1.5 py-0.5">
+                        {c.objectif.type === 'temps' && c.objectif.tempsCible
+                          ? formaterTempsPassage(c.objectif.tempsCible)
+                          : c.objectif.type === 'effort'
+                          ? c.objectif.niveauEffort
+                          : `${c.objectif.pourcentageVMA}% VMA`}
+                      </span>
+                    )}
                   </div>
-                  <button
-                    onClick={(ev) => { ev.stopPropagation(); removeEntry(e.id); }}
-                    className="text-accent text-xs bg-transparent border-none cursor-pointer hover:brightness-125"
-                  >
-                    Supprimer
+                  <p className="text-xs text-text-secondary font-mono">
+                    {(c.parcours.distanceTotale / 1000).toFixed(1)} km
+                    {c.parcours.denivelePositifTotal > 0 && ` · D+${c.parcours.denivelePositifTotal}m`}
+                    <span className="ml-2 text-text-muted">{c.type === 'gpx' ? 'GPX' : 'Manuel'}</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button onClick={() => selectionnerCourse(c.id)}
+                    className="text-accent text-xs bg-transparent border-none cursor-pointer hover:brightness-125">
+                    {c.objectif ? 'Ouvrir' : 'Configurer'}
+                  </button>
+                  <button onClick={() => supprimerCourse(c.id)}
+                    className="text-text-muted text-xs bg-transparent border-none cursor-pointer hover:text-accent">
+                    Suppr.
                   </button>
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Course active sans objectif → définir l'objectif */}
+      {courseActive && !courseActive.objectif ? (
+        <div className="space-y-6">
+          <div className="bg-bg-raised border border-border p-5">
+            <div className="font-mono text-[10px] text-text-muted tracking-[0.16em] mb-3">PARCOURS SELECTIONNE</div>
+            <div className="flex items-end justify-between mb-3">
+              <h2 className="font-display font-bold text-xl">{courseActive.nom}</h2>
+              <button onClick={() => selectionnerCourse(null)}
+                className="text-xs text-text-muted bg-transparent border-none cursor-pointer hover:text-text">
+                ← Retour
+              </button>
+            </div>
+            <div className="flex gap-8 font-mono">
+              <StatBlock label="DISTANCE" value={(courseActive.parcours.distanceTotale / 1000).toFixed(1)} unit="km" />
+              <StatBlock label="D+" value={courseActive.parcours.denivelePositifTotal} unit="m" />
+              <StatBlock label="D-" value={courseActive.parcours.deniveleNegatifTotal} unit="m" />
+            </div>
+          </div>
+
+          {courseActive.type === 'gpx' && courseActive.parcours.points.length > 0 && (
+            <div>
+              <div className="font-mono text-[10px] text-text-muted tracking-[0.16em] mb-2">PROFIL ALTIMETRIQUE</div>
+              <div className="border border-border bg-bg-raised p-3">
+                <ElevationPaceChart parcours={courseActive.parcours} width={760} height={200} />
+              </div>
+            </div>
+          )}
+
+          <ObjectiveForm
+            onSubmit={generer}
+            distanceKm={courseActive.parcours.distanceTotale / 1000}
+            denivelePosM={courseActive.parcours.denivelePositifTotal}
+            deniveleNegM={courseActive.parcours.deniveleNegatifTotal}
+          />
+
+          {validation && !validation.valide && (
+            <div className="border border-accent-orange bg-bg-raised p-4 text-sm text-accent-orange">
+              {validation.message}
             </div>
           )}
         </div>
-      </div>
-
-      {selectedParcours && selectedEntry?.type === 'gpx' && selectedParcours.points.length > 0 && (
-        <div>
-          <label className="block text-xs font-mono text-text-muted tracking-[0.12em] mb-2">PROFIL ALTIMETRIQUE</label>
-          <div className="border border-border bg-bg-raised p-3">
-            <ElevationPaceChart parcours={selectedParcours} width={760} height={200} />
+      ) : !courseActive && (
+        // Pas de course active → import
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-4">
+            <GpxUpload onParcours={addGPX} label="Ajouter un fichier GPX" />
+            <button onClick={() => setShowManual(!showManual)}
+              className="text-sm text-accent hover:brightness-125 bg-transparent border-none cursor-pointer">
+              {showManual ? 'Annuler' : '+ Saisie manuelle (sans GPX)'}
+            </button>
+            {showManual && (
+              <div className="space-y-2 bg-bg-raised border border-border p-4">
+                <input type="text" placeholder="Nom du parcours" value={manualForm.nom}
+                  onChange={(e) => setManualForm((f) => ({ ...f, nom: e.target.value }))}
+                  className="w-full bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
+                <div className="grid grid-cols-3 gap-2">
+                  <input type="number" placeholder="Distance (km)" value={manualForm.distance}
+                    onChange={(e) => setManualForm((f) => ({ ...f, distance: e.target.value }))}
+                    className="bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
+                  <input type="number" placeholder="D+ (m)" value={manualForm.dplus}
+                    onChange={(e) => setManualForm((f) => ({ ...f, dplus: e.target.value }))}
+                    className="bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
+                  <input type="number" placeholder="D- (m)" value={manualForm.dmoins}
+                    onChange={(e) => setManualForm((f) => ({ ...f, dmoins: e.target.value }))}
+                    className="bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none" />
+                </div>
+                <button onClick={addManual}
+                  className="w-full bg-accent text-bg py-2 text-sm font-semibold tracking-[0.08em] cursor-pointer border-none hover:brightness-110">
+                  AJOUTER
+                </button>
+              </div>
+            )}
           </div>
-        </div>
-      )}
-
-      {selectedParcours && (
-        <div className="bg-bg-raised border border-border p-5">
-          <div className="font-mono text-[10px] text-text-muted tracking-[0.16em] mb-3">
-            PARCOURS SELECTIONNE
+          <div className="text-text-secondary text-sm leading-relaxed">
+            {courses.length === 0 ? (
+              <>
+                <p className="text-text mb-2 font-medium">Bienvenue 🏃</p>
+                <p>Importez un fichier GPX ou saisissez manuellement les caractéristiques de votre parcours pour commencer. Vos courses seront sauvegardées et pourront être réutilisées même après modification de votre profil.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-text mb-2 font-medium">Ajouter une nouvelle course</p>
+                <p>Importez un GPX ou créez-en une à la main. Vos courses précédentes restent accessibles ci-dessus.</p>
+              </>
+            )}
           </div>
-          <div className="flex gap-8 font-mono">
-            <StatBlock label="DISTANCE" value={(selectedParcours.distanceTotale / 1000).toFixed(1)} unit="km" />
-            <StatBlock label="D+" value={selectedParcours.denivelePositifTotal} unit="m" />
-            <StatBlock label="D-" value={selectedParcours.deniveleNegatifTotal} unit="m" />
-          </div>
-        </div>
-      )}
-
-      {selectedParcours && <ObjectiveForm onSubmit={generer} />}
-
-      {validation && !validation.valide && (
-        <div className="border border-accent-orange bg-bg-raised p-4 text-sm text-accent-orange">
-          {validation.message}
         </div>
       )}
     </div>

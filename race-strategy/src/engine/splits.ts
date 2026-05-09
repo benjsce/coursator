@@ -82,7 +82,8 @@ export function genererSplits(
     };
   });
 
-  const nutrition = genererPlanNutrition(poids, tempsCumule, splits);
+  const distanceKmTotal = segments.reduce((a, s) => a + s.distance, 0) / 1000;
+  const nutrition = genererPlanNutrition(poids, tempsCumule, splits, distanceKmTotal);
 
   splits.forEach((split) => {
     const gel = nutrition.gels.find((g) => g.km === split.km);
