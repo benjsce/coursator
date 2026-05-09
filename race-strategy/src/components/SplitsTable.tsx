@@ -8,45 +8,40 @@ interface Props {
 export function SplitsTable({ splits }: Props) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-200">
-            <th className="text-left py-3 px-2 font-medium text-gray-500">km</th>
-            <th className="text-left py-3 px-2 font-medium text-gray-500">D+/D-</th>
-            <th className="text-left py-3 px-2 font-medium text-gray-500">Allure plate</th>
-            <th className="text-left py-3 px-2 font-medium text-gray-500">Allure ajustée</th>
-            <th className="text-left py-3 px-2 font-medium text-gray-500">Passage</th>
-            <th className="text-left py-3 px-2 font-medium text-gray-500">Nutrition</th>
+      <table className="w-full font-mono text-[11px]" style={{ borderCollapse: 'collapse' }}>
+        <thead className="sticky top-0 bg-bg-surface">
+          <tr className="text-text-muted text-left tracking-[0.08em]">
+            {['KM', 'D+', 'D-', 'ALLURE', 'PASSAGE', 'NUTRITION'].map((h) => (
+              <th key={h} className="py-2 px-2.5 border-b border-border font-medium">{h}</th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {splits.map((split) => (
-            <tr
-              key={split.km}
-              className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-            >
-              <td className="py-2.5 px-2 font-medium text-gray-900">{split.km}</td>
-              <td className="py-2.5 px-2 text-gray-600">
-                <span className="text-green-600">+{split.denivelePositif}</span>
-                <span className="text-gray-400 mx-1">/</span>
-                <span className="text-red-500">-{split.deniveleNegatif}</span>
-              </td>
-              <td className="py-2.5 px-2 text-gray-500">{formaterAllure(split.allurePlate)}</td>
-              <td className="py-2.5 px-2 font-medium text-gray-900">
-                {formaterAllure(split.allureAjustee)}
-              </td>
-              <td className="py-2.5 px-2 text-gray-700">
-                {formaterTempsPassage(split.tempsPassage)}
-              </td>
-              <td className="py-2.5 px-2">
-                {split.nutrition && (
-                  <span className="inline-block bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded">
-                    {split.nutrition}
-                  </span>
-                )}
-              </td>
-            </tr>
-          ))}
+          {splits.map((split) => {
+            const hasNutrition = !!split.nutrition;
+            return (
+              <tr key={split.km} className="border-b border-border/40">
+                <td className="py-1.5 px-2.5 text-text">
+                  {String(split.km).padStart(2, '0')}
+                </td>
+                <td className={`py-1.5 px-2.5 ${split.denivelePositif > 30 ? 'text-accent-orange' : 'text-text-secondary'}`}>
+                  +{split.denivelePositif}
+                </td>
+                <td className="py-1.5 px-2.5 text-text-secondary">
+                  -{split.deniveleNegatif}
+                </td>
+                <td className="py-1.5 px-2.5 text-text">
+                  {formaterAllure(split.allureAjustee)}
+                </td>
+                <td className="py-1.5 px-2.5 text-text">
+                  {formaterTempsPassage(split.tempsPassage)}
+                </td>
+                <td className={`py-1.5 px-2.5 ${hasNutrition ? 'text-accent' : 'text-text-muted'}`}>
+                  {hasNutrition ? `◆ ${split.nutrition}` : '—'}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

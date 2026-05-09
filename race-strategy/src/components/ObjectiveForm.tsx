@@ -31,17 +31,17 @@ export function ObjectiveForm({ onSubmit }: Props) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-gray-900">Objectif</h2>
+      <h2 className="font-display font-bold text-lg">Objectif</h2>
 
-      <div className="flex gap-2">
+      <div className="flex gap-0">
         {(['temps', 'effort', 'pourcentageVMA'] as TypeObjectif[]).map((t) => (
           <button
             key={t}
             onClick={() => setType(t)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            className={`flex-1 px-4 py-2.5 text-sm border cursor-pointer transition-colors ${
               type === t
-                ? 'bg-gray-900 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                ? 'bg-bg-active border-accent text-text'
+                : 'bg-transparent border-border-strong text-text-muted hover:text-text-secondary'
             }`}
           >
             {t === 'temps' ? 'Temps cible' : t === 'effort' ? "Niveau d'effort" : '% VMA'}
@@ -51,29 +51,29 @@ export function ObjectiveForm({ onSubmit }: Props) {
 
       {type === 'temps' && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Temps cible (hh:mm:ss)
+          <label className="block text-xs font-mono text-text-muted tracking-[0.12em] mb-1">
+            TEMPS CIBLE (HH:MM:SS)
           </label>
           <input
             type="text"
             value={tempsStr}
             onChange={(e) => setTempsStr(e.target.value)}
             placeholder="3:30:00"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+            className="w-full bg-bg-surface border border-border-strong text-text px-3 py-2 text-sm font-mono focus:border-accent focus:outline-none"
           />
         </div>
       )}
 
       {type === 'effort' && (
-        <div className="flex gap-2">
+        <div className="flex gap-0">
           {(['confort', 'performance', 'record'] as NiveauEffort[]).map((n) => (
             <button
               key={n}
               onClick={() => setEffort(n)}
-              className={`flex-1 px-4 py-3 rounded-md text-sm font-medium transition-colors ${
+              className={`flex-1 px-4 py-3 text-sm border cursor-pointer transition-colors ${
                 effort === n
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  ? 'bg-accent text-bg border-accent'
+                  : 'bg-transparent border-border-strong text-text-muted hover:text-text'
               }`}
             >
               {n === 'confort' ? 'Confort' : n === 'performance' ? 'Performance' : 'Record'}
@@ -84,8 +84,8 @@ export function ObjectiveForm({ onSubmit }: Props) {
 
       {type === 'pourcentageVMA' && (
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            % de VMA : {pctVMA}%
+          <label className="block text-xs font-mono text-text-muted tracking-[0.12em] mb-1">
+            % DE VMA : {pctVMA}%
           </label>
           <input
             type="range"
@@ -95,7 +95,7 @@ export function ObjectiveForm({ onSubmit }: Props) {
             onChange={(e) => setPctVMA(+e.target.value)}
             className="w-full"
           />
-          <div className="flex justify-between text-xs text-gray-400 mt-1">
+          <div className="flex justify-between text-[10px] font-mono text-text-muted mt-1">
             <span>60% (récup)</span>
             <span>80% (marathon)</span>
             <span>100% (VMA)</span>
@@ -105,9 +105,9 @@ export function ObjectiveForm({ onSubmit }: Props) {
 
       <button
         onClick={handleSubmit}
-        className="w-full bg-gray-900 text-white rounded-md py-2.5 text-sm font-medium hover:bg-gray-800 transition-colors"
+        className="w-full bg-accent text-bg py-2.5 text-sm font-semibold tracking-[0.08em] cursor-pointer hover:brightness-110 transition-all border-none"
       >
-        Définir l'objectif
+        DEFINIR L'OBJECTIF
       </button>
     </div>
   );

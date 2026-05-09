@@ -37,7 +37,9 @@ export function GpxUpload({ onParcours, label = 'Importer un fichier GPX' }: Pro
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
+      <label className="block text-xs font-mono text-text-muted tracking-[0.12em] mb-2">
+        {label.toUpperCase()}
+      </label>
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -50,8 +52,10 @@ export function GpxUpload({ onParcours, label = 'Importer un fichier GPX' }: Pro
           const file = e.dataTransfer.files[0];
           if (file) traiterFichier(file);
         }}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-          dragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'
+        className={`border-2 border-dashed p-8 text-center cursor-pointer transition-colors ${
+          dragging
+            ? 'border-accent bg-bg-active'
+            : 'border-border-strong hover:border-text-muted'
         }`}
         onClick={() => {
           const input = document.createElement('input');
@@ -65,14 +69,14 @@ export function GpxUpload({ onParcours, label = 'Importer un fichier GPX' }: Pro
         }}
       >
         {nomFichier ? (
-          <p className="text-sm text-gray-600">{nomFichier}</p>
+          <p className="text-sm text-text-secondary">{nomFichier}</p>
         ) : (
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-text-muted">
             Glissez un fichier .gpx ici ou cliquez pour sélectionner
           </p>
         )}
       </div>
-      {erreur && <p className="mt-2 text-sm text-red-600">{erreur}</p>}
+      {erreur && <p className="mt-2 text-sm text-accent">{erreur}</p>}
     </div>
   );
 }

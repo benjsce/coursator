@@ -4,7 +4,7 @@
     {
       "name": "race-strategy",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": ["run", "dev", "--prefix", "/Users/benjaminscemama/Desktop/coursator/race-strategy"],
       "port": 5173
     }
   ]

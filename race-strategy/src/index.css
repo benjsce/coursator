@@ -1,10 +1,46 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-display: "Archivo Narrow", sans-serif;
+  --font-mono: "Geist Mono", monospace;
+
+  --color-bg: #0a0a0a;
+  --color-bg-raised: #15130f;
+  --color-bg-surface: #0e0c0a;
+  --color-bg-active: #141210;
+  --color-bg-hover: #1a1815;
+
+  --color-border: #1f1d1a;
+  --color-border-strong: #2a2622;
+  --color-border-accent: #3a1f1f;
+
+  --color-text: #e7e3d8;
+  --color-text-secondary: #8a8479;
+  --color-text-muted: #6b6760;
+  --color-text-dim: #5a544a;
+  --color-text-surface: #c5beae;
+
+  --color-accent: #ff3a3a;
+  --color-accent-orange: #ff8a3a;
+  --color-accent-blue: #7da3e7;
+
+  --color-grid: #2a2622;
+  --color-grid-dim: #3a3631;
 }
 
-body {
+html, body {
   margin: 0;
-  background: #ffffff;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-grid-dim); }
+
+input[type="range"] {
+  accent-color: var(--color-accent);
 }
